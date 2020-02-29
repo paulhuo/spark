@@ -87,7 +87,12 @@ private[spark] class KubernetesClusterManager extends ExternalClusterManager wit
       removedExecutorsCache)
 
     val executorPodsAllocator = new ExecutorPodsAllocator(
-      sc.conf, new KubernetesExecutorBuilder(), kubernetesClient, snapshotsStore, new SystemClock())
+      sc.conf,
+      sc.env.securityManager,
+      new KubernetesExecutorBuilder(),
+      kubernetesClient,
+      snapshotsStore,
+      new SystemClock())
 
     val podsWatchEventSource = new ExecutorPodsWatchSnapshotSource(
       snapshotsStore,
@@ -100,7 +105,7 @@ private[spark] class KubernetesClusterManager extends ExternalClusterManager wit
 
     new KubernetesClusterSchedulerBackend(
       scheduler.asInstanceOf[TaskSchedulerImpl],
-      sc.env.rpcEnv,
+      sc,
       kubernetesClient,
       requestExecutorsService,
       snapshotsStore,

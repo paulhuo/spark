@@ -22,6 +22,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 import io.fabric8.kubernetes.client.KubernetesClient
 
+import org.apache.spark.SparkContext
 import org.apache.spark.deploy.k8s.Config._
 import org.apache.spark.deploy.k8s.Constants._
 import org.apache.spark.rpc.{RpcAddress, RpcEnv}
@@ -31,7 +32,7 @@ import org.apache.spark.util.{ThreadUtils, Utils}
 
 private[spark] class KubernetesClusterSchedulerBackend(
     scheduler: TaskSchedulerImpl,
-    rpcEnv: RpcEnv,
+    sc: SparkContext,
     kubernetesClient: KubernetesClient,
     requestExecutorsService: ExecutorService,
     snapshotsStore: ExecutorPodsSnapshotsStore,
@@ -39,7 +40,7 @@ private[spark] class KubernetesClusterSchedulerBackend(
     lifecycleEventHandler: ExecutorPodsLifecycleManager,
     watchEvents: ExecutorPodsWatchSnapshotSource,
     pollEvents: ExecutorPodsPollingSnapshotSource)
-  extends CoarseGrainedSchedulerBackend(scheduler, rpcEnv) {
+  extends CoarseGrainedSchedulerBackend(scheduler, sc.env.rpcEnv) {
 
   private implicit val requestExecutorContext =
     ExecutionContext.fromExecutorService(requestExecutorsService)

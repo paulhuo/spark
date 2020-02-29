@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.fabric8.kubernetes.api.model._
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SecurityManager, SparkConf, SparkException}
 import org.apache.spark.deploy.k8s._
 import org.apache.spark.deploy.k8s.Config._
 import org.apache.spark.deploy.k8s.Constants._
@@ -30,7 +30,8 @@ import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend
 import org.apache.spark.util.Utils
 
 private[spark] class BasicExecutorFeatureStep(
-    kubernetesConf: KubernetesConf[KubernetesExecutorSpecificConf])
+    kubernetesConf: KubernetesConf[KubernetesExecutorSpecificConf],
+    secMgr: SecurityManager)
   extends KubernetesFeatureConfigStep {
 
   // Consider moving some of these fields to KubernetesConf or KubernetesExecutorSpecificConf
@@ -97,17 +98,28 @@ private[spark] class BasicExecutorFeatureStep(
         .withValue(cp)
         .build()
     }
-    val executorExtraJavaOptionsEnv = kubernetesConf
-      .get(EXECUTOR_JAVA_OPTIONS)
-      .map { opts =>
-        val subsOpts = Utils.substituteAppNExecIds(opts, kubernetesConf.appId,
-          kubernetesConf.roleSpecificConf.executorId)
-        val delimitedOpts = Utils.splitCommandString(subsOpts)
-        delimitedOpts.zipWithIndex.map {
-          case (opt, index) =>
-            new EnvVarBuilder().withName(s"$ENV_JAVA_OPT_PREFIX$index").withValue(opt).build()
-        }
-      }.getOrElse(Seq.empty[EnvVar])
+
+    val userOpts = kubernetesConf.get(EXECUTOR_JAVA_OPTIONS).toSeq.flatMap { opts =>
+      val subsOpts = Utils.substituteAppNExecIds(opts, kubernetesConf.appId,
+        kubernetesConf.roleSpecificConf.executorId)
+      Utils.splitCommandString(subsOpts)
+    }
+    val sparkOpts = Utils.sparkJavaOpts(kubernetesConf.sparkConf,
+      SparkConf.isExecutorStartupConf)
+    val executorExtraJavaOptionsEnv =
+      (userOpts ++ sparkOpts).zipWithIndex.map { case (opt, index) =>
+      new EnvVarBuilder()
+        .withName(s"$ENV_JAVA_OPT_PREFIX$index")
+        .withValue(opt)
+        .build()
+    }
+
+    val authSecretOptionEnv = Option(secMgr.getSecretKey()).map { authSecret =>
+      new EnvVarBuilder()
+        .withName(SecurityManager.ENV_AUTH_SECRET)
+        .withValue(authSecret)
+        .build()
+    }
     val executorEnv = (Seq(
       (ENV_DRIVER_URL, driverUrl),
       (ENV_EXECUTOR_CORES, executorCores.toString),
@@ -128,7 +140,8 @@ private[spark] class BasicExecutorFeatureStep(
           .withNewFieldRef("v1", "status.podIP")
           .build())
         .build()
-    ) ++ executorExtraJavaOptionsEnv ++ executorExtraClasspathEnv.toSeq
+    ) ++ executorExtraJavaOptionsEnv ++ executorExtraClasspathEnv.toSeq ++ authSecretOptionEnv
+
     val requiredPorts = Seq(
       (BLOCK_MANAGER_PORT_NAME, blockManagerPort))
       .map { case (name, port) =>

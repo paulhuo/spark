@@ -22,10 +22,11 @@ import io.fabric8.kubernetes.api.model._
 import org.mockito.MockitoAnnotations
 import org.scalatest.{BeforeAndAfter, BeforeAndAfterEach}
 
-import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.{SecurityManager, SparkConf, SparkFunSuite}
 import org.apache.spark.deploy.k8s.{KubernetesConf, KubernetesExecutorSpecificConf, SparkPod}
 import org.apache.spark.deploy.k8s.Config._
 import org.apache.spark.deploy.k8s.Constants._
+import org.apache.spark.internal.config.NETWORK_AUTH_ENABLED
 import org.apache.spark.rpc.RpcEndpointAddress
 import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend
 
@@ -67,7 +68,7 @@ class BasicExecutorFeatureStepSuite
 
   before {
     MockitoAnnotations.initMocks(this)
-    baseConf = new SparkConf()
+    baseConf = new SparkConf(false)
       .set(KUBERNETES_DRIVER_POD_NAME, DRIVER_POD_NAME)
       .set(KUBERNETES_EXECUTOR_POD_NAME_PREFIX, RESOURCE_NAME_PREFIX)
       .set(CONTAINER_IMAGE, EXECUTOR_IMAGE)
@@ -91,7 +92,7 @@ class BasicExecutorFeatureStepSuite
         Map.empty,
         Map.empty,
         Nil,
-        Seq.empty[String]))
+        Seq.empty[String]), new SecurityManager(baseConf))
     val executor = step.configurePod(SparkPod.initialPod())
 
     // The executor pod name and default labels.
@@ -111,7 +112,7 @@ class BasicExecutorFeatureStepSuite
     assert(executor.pod.getSpec.getNodeSelector.isEmpty)
     assert(executor.pod.getSpec.getVolumes.isEmpty)
 
-    checkEnv(executor, Map())
+    checkEnv(executor, baseConf, Map())
     checkOwnerReferences(executor.pod, DRIVER_POD_UID)
   }
 
@@ -131,7 +132,7 @@ class BasicExecutorFeatureStepSuite
         Map.empty,
         Map.empty,
         Nil,
-        Seq.empty[String]))
+        Seq.empty[String]), new SecurityManager(baseConf))
     assert(step.configurePod(SparkPod.initialPod()).pod.getSpec.getHostname.length === 63)
   }
 
@@ -152,10 +153,10 @@ class BasicExecutorFeatureStepSuite
         Map.empty,
         Map("qux" -> "quux"),
         Nil,
-        Seq.empty[String]))
+        Seq.empty[String]), new SecurityManager(baseConf))
     val executor = step.configurePod(SparkPod.initialPod())
 
-    checkEnv(executor,
+    checkEnv(executor, baseConf,
       Map("SPARK_JAVA_OPT_0" -> "foo=bar",
         ENV_CLASSPATH -> "bar=baz",
         "qux" -> "quux"))
@@ -179,10 +180,37 @@ class BasicExecutorFeatureStepSuite
         Map.empty,
         Map.empty,
         Nil,
-        Seq.empty[String]))
+        Seq.empty[String]), new SecurityManager(baseConf))
     val executor = step.configurePod(SparkPod.initialPod())
     // This is checking that basic executor + executorMemory = 1408 + 42 = 1450
     assert(executor.container.getResources.getRequests.get("memory").getAmount === "1450Mi")
+  }
+
+  test("auth secret propagation") {
+    val conf = baseConf.clone()
+    conf.set(NETWORK_AUTH_ENABLED, true)
+    conf.set("spark.master", "k8s://127.0.0.1")
+
+    val secMgr = new SecurityManager(conf)
+    secMgr.initializeAuth()
+
+    val step = new BasicExecutorFeatureStep(
+      KubernetesConf(
+        conf,
+        KubernetesExecutorSpecificConf("1", Some(DRIVER_POD)),
+        RESOURCE_NAME_PREFIX,
+        APP_ID,
+        LABELS,
+        ANNOTATIONS,
+        Map.empty,
+        Map.empty,
+        Map.empty,
+        Nil,
+        Seq.empty[String]),
+      secMgr)
+
+    val executor = step.configurePod(SparkPod.initialPod())
+    checkEnv(executor, conf, Map(SecurityManager.ENV_AUTH_SECRET -> secMgr.getSecretKey()))
   }
 
   // There is always exactly one controller reference, and it points to the driver pod.
@@ -193,7 +221,10 @@ class BasicExecutorFeatureStepSuite
   }
 
   // Check that the expected environment variables are present.
-  private def checkEnv(executorPod: SparkPod, additionalEnvVars: Map[String, String]): Unit = {
+  private def checkEnv(
+      executorPod: SparkPod,
+      conf: SparkConf,
+      additionalEnvVars: Map[String, String]): Unit = {
     val defaultEnvs = Map(
       ENV_EXECUTOR_ID -> "1",
       ENV_DRIVER_URL -> DRIVER_ADDRESS.toString,

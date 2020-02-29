@@ -18,7 +18,7 @@ package org.apache.spark.scheduler.cluster.k8s
 
 import io.fabric8.kubernetes.api.model.PodBuilder
 
-import org.apache.spark.{SparkConf, SparkFunSuite}
+import org.apache.spark.{SecurityManager, SparkConf, SparkFunSuite}
 import org.apache.spark.deploy.k8s._
 import org.apache.spark.deploy.k8s.features._
 
@@ -28,6 +28,8 @@ class KubernetesExecutorBuilderSuite extends SparkFunSuite {
   private val ENV_SECRETS_STEP_TYPE = "env-secrets"
   private val LOCAL_DIRS_STEP_TYPE = "local-dirs"
   private val MOUNT_VOLUMES_STEP_TYPE = "mount-volumes"
+
+  private val secMgr = new SecurityManager(new SparkConf(false))
 
   private val basicFeatureStep = KubernetesFeaturesTestUtils.getMockConfigStepForStepType(
     BASIC_STEP_TYPE, classOf[BasicExecutorFeatureStep])
@@ -41,7 +43,7 @@ class KubernetesExecutorBuilderSuite extends SparkFunSuite {
     MOUNT_VOLUMES_STEP_TYPE, classOf[MountVolumesFeatureStep])
 
   private val builderUnderTest = new KubernetesExecutorBuilder(
-    _ => basicFeatureStep,
+    (_, _) => basicFeatureStep,
     _ => mountSecretsStep,
     _ => envSecretsStep,
     _ => localDirsStep,
@@ -62,7 +64,7 @@ class KubernetesExecutorBuilderSuite extends SparkFunSuite {
       Nil,
       Seq.empty[String])
     validateStepTypesApplied(
-      builderUnderTest.buildFromFeatures(conf), BASIC_STEP_TYPE, LOCAL_DIRS_STEP_TYPE)
+      builderUnderTest.buildFromFeatures(conf, secMgr), BASIC_STEP_TYPE, LOCAL_DIRS_STEP_TYPE)
   }
 
   test("Apply secrets step if secrets are present.") {
@@ -80,7 +82,7 @@ class KubernetesExecutorBuilderSuite extends SparkFunSuite {
       Nil,
       Seq.empty[String])
     validateStepTypesApplied(
-      builderUnderTest.buildFromFeatures(conf),
+      builderUnderTest.buildFromFeatures(conf, secMgr),
       BASIC_STEP_TYPE,
       LOCAL_DIRS_STEP_TYPE,
       SECRETS_STEP_TYPE,
@@ -107,7 +109,7 @@ class KubernetesExecutorBuilderSuite extends SparkFunSuite {
       volumeSpec :: Nil,
       Seq.empty[String])
     validateStepTypesApplied(
-      builderUnderTest.buildFromFeatures(conf),
+      builderUnderTest.buildFromFeatures(conf, secMgr),
       BASIC_STEP_TYPE,
       LOCAL_DIRS_STEP_TYPE,
       MOUNT_VOLUMES_STEP_TYPE)

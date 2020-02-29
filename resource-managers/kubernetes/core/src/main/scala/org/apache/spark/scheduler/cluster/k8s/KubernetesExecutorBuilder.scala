@@ -16,14 +16,15 @@
  */
 package org.apache.spark.scheduler.cluster.k8s
 
+import org.apache.spark.SecurityManager
 import org.apache.spark.deploy.k8s.{KubernetesConf, KubernetesExecutorSpecificConf, KubernetesRoleSpecificConf, SparkPod}
 import org.apache.spark.deploy.k8s.features._
 import org.apache.spark.deploy.k8s.features.{BasicExecutorFeatureStep, EnvSecretsFeatureStep, LocalDirsFeatureStep, MountSecretsFeatureStep}
 
 private[spark] class KubernetesExecutorBuilder(
-    provideBasicStep: (KubernetesConf [KubernetesExecutorSpecificConf])
+    provideBasicStep: (KubernetesConf[KubernetesExecutorSpecificConf], SecurityManager)
       => BasicExecutorFeatureStep =
-      new BasicExecutorFeatureStep(_),
+      new BasicExecutorFeatureStep(_, _),
     provideSecretsStep: (KubernetesConf[_ <: KubernetesRoleSpecificConf])
       => MountSecretsFeatureStep =
       new MountSecretsFeatureStep(_),
@@ -38,9 +39,11 @@ private[spark] class KubernetesExecutorBuilder(
       new MountVolumesFeatureStep(_)) {
 
   def buildFromFeatures(
-    kubernetesConf: KubernetesConf[KubernetesExecutorSpecificConf]): SparkPod = {
+    kubernetesConf: KubernetesConf[KubernetesExecutorSpecificConf],
+    secMgr: SecurityManager): SparkPod = {
 
-    val baseFeatures = Seq(provideBasicStep(kubernetesConf), provideLocalDirsStep(kubernetesConf))
+    val baseFeatures = Seq(provideBasicStep(kubernetesConf, secMgr),
+      provideLocalDirsStep(kubernetesConf))
     val secretFeature = if (kubernetesConf.roleSecretNamesToMountPaths.nonEmpty) {
       Seq(provideSecretsStep(kubernetesConf))
     } else Nil
